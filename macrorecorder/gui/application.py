@@ -6,8 +6,8 @@ import sys
 import threading
 from typing import Optional
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import (
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtWidgets import (
     QApplication,
     QButtonGroup,
     QDoubleSpinBox,
@@ -109,13 +109,41 @@ class MacroRecorderApp(QWidget):
 
         main_layout.addWidget(self.config_container)
 
+        # Layout horizontal untuk tombol Perekam dan Toggle Always on Top
+        record_layout = QHBoxLayout()
+        record_layout.setSpacing(10)
+
         self.record_button = QPushButton("Start Recording")
+        self.record_button.setStyleSheet(
+            "background-color: #2ecc71; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+        )
         self.record_button.clicked.connect(self.on_record_button_clicked)
-        main_layout.addWidget(self.record_button)
+        record_layout.addWidget(self.record_button)
+
+        self.always_on_top_button = QPushButton("Always on Top: ON")
+        self.always_on_top_button.setCheckable(True)
+        self.always_on_top_button.setChecked(True)
+        self.always_on_top_button.setStyleSheet(
+            "background-color: #2980b9; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+        )
+        self.always_on_top_button.clicked.connect(self.on_always_on_top_toggled)
+        record_layout.addWidget(self.always_on_top_button)
+
+        main_layout.addLayout(record_layout)
 
         self.play_button = QPushButton("Play Recorded Script")
+        self.play_button.setStyleSheet(
+            "background-color: #3498db; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+        )
         self.play_button.clicked.connect(self.on_play_button_clicked)
         main_layout.addWidget(self.play_button)
+
+        self.clear_button = QPushButton("Clear Current Slot")
+        self.clear_button.setStyleSheet(
+            "background-color: #8b0000; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+        )
+        self.clear_button.clicked.connect(self.on_clear_button_clicked)
+        main_layout.addWidget(self.clear_button)
 
         self.status_label = QLabel("Status: Idle")
         main_layout.addWidget(self.status_label)
@@ -142,24 +170,31 @@ class MacroRecorderApp(QWidget):
 
         self.update_events_view()
         self.load_slot_settings()
+        self.on_always_on_top_toggled(True)
 
     def on_record_button_clicked(self):
         current_recording_status = self.recorder.toggle_recording(self.current_slot)
         if current_recording_status:
             self.record_button.setText("Stop Recording")
+            self.record_button.setStyleSheet(
+                "background-color: #e74c3c; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+            )
             self.status_label.setText("Status: Recording")
             self.config_container.hide()
-            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-            self.show()
+            self.play_button.hide()
+            self.clear_button.hide()
             self.resize(300, 220)
             self.record_log_timer.start()
         else:
             self.record_button.setText("Start Recording")
+            self.record_button.setStyleSheet(
+                "background-color: #2ecc71; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+            )
             self.status_label.setText("Status: Stopped")
             self.record_log_timer.stop()
             self.config_container.show()
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
-            self.show()
+            self.play_button.show()
+            self.clear_button.show()
             self.resize(380, 460)
             self.update_events_view()
 
@@ -274,6 +309,28 @@ class MacroRecorderApp(QWidget):
         else:
             text = "(No events recorded)\n... [Merekam]"
         self.events_text.setPlainText(text)
+
+    def on_always_on_top_toggled(self, checked):
+        if checked:
+            self.always_on_top_button.setText("Always on Top: ON")
+            self.always_on_top_button.setStyleSheet(
+                "background-color: #2980b9; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+            )
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        else:
+            self.always_on_top_button.setText("Always on Top: OFF")
+            self.always_on_top_button.setStyleSheet(
+                "background-color: #7f8c8d; color: white; border-radius: 4px; padding: 6px; font-weight: bold;"
+            )
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+        self.show()
+
+    def on_clear_button_clicked(self):
+        if self.recorder.is_recording() or self.recorder.is_playing():
+            return
+        self.recorder.clear_slot(self.current_slot)
+        self.update_events_view()
+        self.status_label.setText("Status: Slot Cleared")
 
     def closeEvent(self, event):
         if self.recorder.is_recording():
