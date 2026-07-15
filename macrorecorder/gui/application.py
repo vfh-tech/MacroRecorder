@@ -6,7 +6,7 @@ import sys
 import threading
 from typing import Optional
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -40,6 +40,13 @@ class MacroRecorderApp(QWidget):
         main_layout.setSpacing(10)
         self.setLayout(main_layout)
 
+        # Container untuk widget konfigurasi
+        self.config_container = QWidget()
+        config_layout = QVBoxLayout()
+        config_layout.setContentsMargins(0, 0, 0, 0)
+        config_layout.setSpacing(10)
+        self.config_container.setLayout(config_layout)
+
         slots_box = QGroupBox("Macro Slots")
         slots_layout = QHBoxLayout()
         slots_layout.setSpacing(12)
@@ -53,31 +60,23 @@ class MacroRecorderApp(QWidget):
             if index == 0:
                 button.setChecked(True)
         self.slot_group.buttonToggled.connect(self.on_slot_button_toggled)
-        main_layout.addWidget(slots_box)
-
-        self.record_button = QPushButton("Start Recording")
-        self.record_button.clicked.connect(self.on_record_button_clicked)
-        main_layout.addWidget(self.record_button)
-
-        self.play_button = QPushButton("Play Recorded Script")
-        self.play_button.clicked.connect(self.on_play_button_clicked)
-        main_layout.addWidget(self.play_button)
+        config_layout.addWidget(slots_box)
 
         self.repetitions_label = QLabel(
             f"Repetitions: {self.recorder.settings['repetitions']}"
         )
-        main_layout.addWidget(self.repetitions_label)
+        config_layout.addWidget(self.repetitions_label)
 
         self.repetitions_spinbox = QSpinBox()
         self.repetitions_spinbox.setRange(1, 10)
         self.repetitions_spinbox.setValue(self.recorder.settings["repetitions"])
         self.repetitions_spinbox.valueChanged.connect(self.on_repetitions_changed)
-        main_layout.addWidget(self.repetitions_spinbox)
+        config_layout.addWidget(self.repetitions_spinbox)
 
         self.regular_delay_label = QLabel(
             f"Regular Stroke Delay: {self.recorder.settings['regular_delay']:.3f}s"
         )
-        main_layout.addWidget(self.regular_delay_label)
+        config_layout.addWidget(self.regular_delay_label)
 
         self.regular_delay_spinbox = QDoubleSpinBox()
         self.regular_delay_spinbox.setDecimals(3)
@@ -89,12 +88,12 @@ class MacroRecorderApp(QWidget):
         self.regular_delay_spinbox.valueChanged.connect(
             self.on_regular_delay_changed
         )
-        main_layout.addWidget(self.regular_delay_spinbox)
+        config_layout.addWidget(self.regular_delay_spinbox)
 
         self.alt_tab_delay_label = QLabel(
             f"Alt+Tab Delay: {self.recorder.settings['alt_tab_delay']:.2f}s"
         )
-        main_layout.addWidget(self.alt_tab_delay_label)
+        config_layout.addWidget(self.alt_tab_delay_label)
 
         self.alt_tab_delay_spinbox = QDoubleSpinBox()
         self.alt_tab_delay_spinbox.setDecimals(2)
@@ -106,7 +105,17 @@ class MacroRecorderApp(QWidget):
         self.alt_tab_delay_spinbox.valueChanged.connect(
             self.on_alt_tab_delay_changed
         )
-        main_layout.addWidget(self.alt_tab_delay_spinbox)
+        config_layout.addWidget(self.alt_tab_delay_spinbox)
+
+        main_layout.addWidget(self.config_container)
+
+        self.record_button = QPushButton("Start Recording")
+        self.record_button.clicked.connect(self.on_record_button_clicked)
+        main_layout.addWidget(self.record_button)
+
+        self.play_button = QPushButton("Play Recorded Script")
+        self.play_button.clicked.connect(self.on_play_button_clicked)
+        main_layout.addWidget(self.play_button)
 
         self.status_label = QLabel("Status: Idle")
         main_layout.addWidget(self.status_label)
@@ -126,6 +135,11 @@ class MacroRecorderApp(QWidget):
         self.playback_timer.setInterval(100)
         self.playback_timer.timeout.connect(self.check_if_playing)
 
+        # Timer untuk pembaruan log real-time
+        self.record_log_timer = QTimer(self)
+        self.record_log_timer.setInterval(100)
+        self.record_log_timer.timeout.connect(self.update_live_log)
+
         self.update_events_view()
         self.load_slot_settings()
 
@@ -134,9 +148,19 @@ class MacroRecorderApp(QWidget):
         if current_recording_status:
             self.record_button.setText("Stop Recording")
             self.status_label.setText("Status: Recording")
+            self.config_container.hide()
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            self.show()
+            self.resize(300, 220)
+            self.record_log_timer.start()
         else:
             self.record_button.setText("Start Recording")
             self.status_label.setText("Status: Stopped")
+            self.record_log_timer.stop()
+            self.config_container.show()
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self.show()
+            self.resize(380, 460)
             self.update_events_view()
 
     def on_play_button_clicked(self):
@@ -213,14 +237,42 @@ class MacroRecorderApp(QWidget):
                 key = event.get("key", "")
                 action = event.get("action", "")
                 duration = event.get("duration")
+                x = event.get("x")
+                y = event.get("y")
+                
+                pos_str = f" at ({x}, {y})" if x is not None and y is not None else ""
+
                 if duration is not None:
-                    lines.append(f"{key} {action} ({duration:.3f}s)")
+                    lines.append(f"{key} {action}{pos_str} ({duration:.3f}s)")
                 else:
-                    lines.append(f"{key} {action}")
+                    lines.append(f"{key} {action}{pos_str}")
             text = "\n".join(lines)
         else:
             text = "(No events recorded)"
 
+        self.events_text.setPlainText(text)
+
+    def update_live_log(self):
+        """Update events text real-time with the last 5 events during recording."""
+        events = self.recorder._log
+        if events:
+            lines = []
+            for event in events[-5:]:
+                key = event.get("key", "")
+                action = event.get("action", "")
+                duration = event.get("duration")
+                x = event.get("x")
+                y = event.get("y")
+                
+                pos_str = f" at ({x}, {y})" if x is not None and y is not None else ""
+
+                if duration is not None:
+                    lines.append(f"{key} {action}{pos_str} ({duration:.3f}s)")
+                else:
+                    lines.append(f"{key} {action}{pos_str}")
+            text = "\n".join(lines) + "\n... [Merekam]"
+        else:
+            text = "(No events recorded)\n... [Merekam]"
         self.events_text.setPlainText(text)
 
     def closeEvent(self, event):
@@ -228,6 +280,8 @@ class MacroRecorderApp(QWidget):
             self.recorder.toggle_recording(self.current_slot)
         if self.playback_timer and self.playback_timer.isActive():
             self.playback_timer.stop()
+        if self.record_log_timer and self.record_log_timer.isActive():
+            self.record_log_timer.stop()
         super().closeEvent(event)
 
 

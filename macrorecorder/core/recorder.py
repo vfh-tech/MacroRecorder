@@ -1,12 +1,13 @@
-"""Keyboard macro recording and playback helpers."""
+"""Keyboard and mouse macro recording and playback helpers."""
 
 from __future__ import annotations
 
 import time
 from typing import Any, Dict, List, Optional
 
-from pynput import keyboard
+from pynput import keyboard, mouse
 from pynput.keyboard import Controller
+from pynput.mouse import Controller as MouseController, Button
 
 from .config import DEFAULT_SETTINGS, LOG_FILE, SPECIAL_KEYS
 from .storage import load_slots as _load_slots, save_slot as _save_slot
@@ -16,8 +17,11 @@ _log: List[Dict[str, Any]] = []
 _recording = False
 _playing = False
 _key_down_time: Optional[float] = None
+_mouse_down_time: Optional[float] = None
 _controller = Controller()
+_mouse_controller = MouseController()
 _listener: Optional[keyboard.Listener] = None
+_mouse_listener: Optional[mouse.Listener] = None
 
 
 def load_slots() -> List[Dict[str, Any]]:
@@ -68,7 +72,6 @@ def play(slot_index: int = 0) -> None:
             for event in events:
                 key_name = event["key"]
                 action = event["action"]
-                resolved_key = _resolve_key(key_name)
 
                 default_delay = (
                     effective_settings["alt_tab_delay"]
@@ -77,10 +80,24 @@ def play(slot_index: int = 0) -> None:
                 )
                 duration = event.get("duration", default_delay)
 
-                if action == "press":
-                    _controller.press(resolved_key)
-                elif action == "release":
-                    _controller.release(resolved_key)
+                if key_name.startswith("Mouse."):
+                    button_name = key_name.split(".")[1]
+                    resolved_button = getattr(Button, button_name, None)
+                    if resolved_button is not None:
+                        x = event.get("x")
+                        y = event.get("y")
+                        if x is not None and y is not None:
+                            _mouse_controller.position = (x, y)
+                        if action == "press":
+                            _mouse_controller.press(resolved_button)
+                        elif action == "release":
+                            _mouse_controller.release(resolved_button)
+                else:
+                    resolved_key = _resolve_key(key_name)
+                    if action == "press":
+                        _controller.press(resolved_key)
+                    elif action == "release":
+                        _controller.release(resolved_key)
 
                 time.sleep(duration)
     finally:
@@ -88,20 +105,26 @@ def play(slot_index: int = 0) -> None:
 
 
 def _start_recording() -> None:
-    global _recording, _listener, _key_down_time
+    global _recording, _listener, _mouse_listener, _key_down_time, _mouse_down_time
     _recording = True
     _log.clear()
     _key_down_time = None
+    _mouse_down_time = None
     _listener = keyboard.Listener(on_press=_on_press, on_release=_on_release)
     _listener.start()
+    _mouse_listener = mouse.Listener(on_click=_on_click)
+    _mouse_listener.start()
 
 
 def _stop_recording(slot_index: int) -> None:
-    global _recording, _listener
+    global _recording, _listener, _mouse_listener
     _recording = False
     if _listener:
         _listener.stop()
         _listener = None
+    if _mouse_listener:
+        _mouse_listener.stop()
+        _mouse_listener = None
 
     _save_slot(slot_index, _log.copy(), settings.copy(), LOG_FILE)
 
@@ -114,6 +137,30 @@ def _on_press(key: keyboard.KeyCode | keyboard.Key) -> None:
 def _on_release(key: keyboard.KeyCode | keyboard.Key) -> None:
     if _recording:
         _log_key(key, "release")
+
+
+def _on_click(x: int, y: int, button: mouse.Button, pressed: bool) -> None:
+    if not _recording:
+        return
+    global _mouse_down_time
+    current_time = time.time()
+    action = "press" if pressed else "release"
+    key_name = f"Mouse.{button.name}"
+    event: Dict[str, Any] = {
+        "key": key_name,
+        "action": action,
+        "x": x,
+        "y": y
+    }
+
+    if pressed:
+        _mouse_down_time = current_time
+    elif not pressed and _mouse_down_time is not None:
+        event["duration"] = round(current_time - _mouse_down_time, 3)
+        _mouse_down_time = None
+
+    _log.append(event)
+    print(event)
 
 
 def _log_key(key: keyboard.KeyCode | keyboard.Key, action: str) -> None:
